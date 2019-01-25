@@ -18,5 +18,6 @@ Pod::Spec.new do |s|
   s.weak_frameworks = 'Photos'
   
   s.dependency "React"
+  s.dependency 'SDWebImage/Core'
 end
 
