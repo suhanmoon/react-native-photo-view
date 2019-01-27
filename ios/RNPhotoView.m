@@ -174,7 +174,7 @@
 
     // Sizes
     CGSize boundsSize = self.bounds.size;
-    CGSize imageSize = _photoImageView.image.size;
+    CGSize imageSize = _photoImageView.frame.size;
 
     // Calculate Min
     CGFloat xScale = boundsSize.width / imageSize.width;    // the scale needed to perfectly fit the image width-wise
@@ -264,15 +264,47 @@
 //        self.minimumZoomScale = 1;
         self.zoomScale = 1;
         self.contentSize = CGSizeMake(0, 0);
+        
+        CGSize vwSize = [UIScreen mainScreen].bounds.size;
+        CGFloat screenScale = [[UIScreen mainScreen] scale];
+        CGSize imSize = image.size;
 
+        double maxWidth = vwSize.width * screenScale * self.maxZoomScale;
+        double maxHeight = vwSize.height * screenScale * self.maxZoomScale;
+        
+        double imSizeWidth = imSize.width;
+        double imSizeHeight = imSize.height;
+        
+        if (imSize.width > maxWidth || imSize.height > maxHeight) {
+            
+            if (imSizeWidth / maxWidth > imSizeHeight / maxHeight) {
+                // Width Base Resizing..
+                imSize.width = maxWidth;
+                imSize.height = maxWidth * (imSizeHeight / imSizeWidth);
+            }
+            else {
+                // Height Base Resizing..
+                imSize.height = maxHeight;
+                imSize.width = maxHeight * (imSizeWidth / imSizeHeight);
+            }
+            
+            UIGraphicsBeginImageContext( imSize );
+            [image drawInRect:CGRectMake(0, 0, imSize.width, imSize.height)];
+            UIImage* newImage = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            _photoImageView.image = newImage;
+        }
+        else {
+            _photoImageView.image = image;
+        }
+        
         // Set image
-        _photoImageView.image = image;
         _photoImageView.hidden = NO;
 
         // Setup photo frame
         CGRect photoImageViewFrame;
         photoImageViewFrame.origin = CGPointZero;
-        photoImageViewFrame.size = image.size;
+        photoImageViewFrame.size = imSize;
         _photoImageView.frame = photoImageViewFrame;
         self.contentSize = photoImageViewFrame.size;
 
@@ -314,57 +346,72 @@
                 NSLog(@"%@", exception.reason);
             }
         }
-
-        NSURLRequest *request = [[NSURLRequest alloc] initWithURL:imageURL];
-        
+//
+//        NSURLRequest *request = [[NSURLRequest alloc] initWithURL:imageURL];
+//
         if (source[@"headers"]) {
-            NSMutableURLRequest *mutableRequest = [request mutableCopy];
-            
             NSDictionary *headers = source[@"headers"];
-            NSEnumerator *enumerator = [headers keyEnumerator];
-            id key;
-            while((key = [enumerator nextObject]))
-                [mutableRequest addValue:[headers objectForKey:key] forHTTPHeaderField:key];
-            request = [mutableRequest copy];
+            [headers enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString* header, BOOL *stop) {
+                [[SDWebImageDownloader sharedDownloader] setValue:header forHTTPHeaderField:key];
+            }];
+//            NSMutableURLRequest *mutableRequest = [request mutableCopy];
+//
+//            NSDictionary *headers = source[@"headers"];
+//            NSEnumerator *enumerator = [headers keyEnumerator];
+//            id key;
+//            while((key = [enumerator nextObject]))
+//                [mutableRequest addValue:[headers objectForKey:key] forHTTPHeaderField:key];
+//            request = [mutableRequest copy];
         }
 
+        
         __weak RNPhotoView *weakSelf = self;
         if (_onPhotoViewerLoadStart) {
             _onPhotoViewerLoadStart(nil);
         }
+        
+        SDWebImageManager *mgr = [SDWebImageManager sharedManager];
+        [mgr loadImageWithURL: imageURL
+                      options: SDWebImageScaleDownLargeImages
+                     progress:^(NSInteger receivedSize, NSInteger expectedSize, NSURL * _Nullable targetURL) {
+                        if (_onPhotoViewerProgress) {
+                            _onPhotoViewerProgress(@{
+                                @"loaded": @((double)receivedSize),
+                                @"total": @((double)expectedSize),
+                            });
+                        }
+                     }
+                    completed:^(UIImage * _Nullable image, NSData * _Nullable data, NSError * _Nullable error, SDImageCacheType cacheType, BOOL finished, NSURL * _Nullable imageURL) {
+                        if (image) {
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                [weakSelf setImage:image];
+                            });
+                            if (_onPhotoViewerLoad) {
+                                _onPhotoViewerLoad(nil);
+                            }
+                        } else {
+                            if (_onPhotoViewerError) {
+                                _onPhotoViewerError(nil);
+                            }
+                        }
+                        if (_onPhotoViewerLoadEnd) {
+                            _onPhotoViewerLoadEnd(nil);
+                        }
 
-        // use default values from [imageLoader loadImageWithURLRequest:request callback:callback] method
-        [_bridge.imageLoader loadImageWithURLRequest:request
-                                        size:CGSizeZero
-                                       scale:1
-                                     clipped:YES
-                                  resizeMode:RCTResizeModeStretch
-                               progressBlock:^(int64_t progress, int64_t total) {
-                                   if (_onPhotoViewerProgress) {
-                                       _onPhotoViewerProgress(@{
-                                           @"loaded": @((double)progress),
-                                           @"total": @((double)total),
-                                       });
-                                   }
-                               }
-                            partialLoadBlock:nil
-                             completionBlock:^(NSError *error, UIImage *image) {
-                                                if (image) {
-                                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                                        [weakSelf setImage:image];
-                                                    });
-                                                    if (_onPhotoViewerLoad) {
-                                                        _onPhotoViewerLoad(nil);
-                                                    }
-                                                } else {
-                                                    if (_onPhotoViewerError) {
-                                                        _onPhotoViewerError(nil);
-                                                    }
-                                                }
-                                                if (_onPhotoViewerLoadEnd) {
-                                                    _onPhotoViewerLoadEnd(nil);
-                                                }
-                                            }];
+                    }];
+        
+//
+//        // use default values from [imageLoader loadImageWithURLRequest:request callback:callback] method
+//        [_bridge.imageLoader loadImageWithURLRequest:request
+//                                        size:CGSizeZero
+//                                       scale:1
+//                                     clipped:YES
+//                                  resizeMode:RCTResizeModeStretch
+//                               progressBlock:^(int64_t progress, int64_t total) {
+//                               }
+//                            partialLoadBlock:nil
+//                             completionBlock:^(NSError *error, UIImage *image) {
+//                                            }];
     });
 }
 
